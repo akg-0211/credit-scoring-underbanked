@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alternative Credit Scoring</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1d2330; --muted:#667085; --line:#e4e7ec;
+          --white:#12805c; --grey:#b54708; --red:#c01048; --accent:#3a5bd9; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:18px 28px; background:var(--card); border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:19px; }
+  header p { margin:4px 0 0; color:var(--muted); }
+  main { display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:20px; padding:20px 28px; }
+  @media (max-width:980px){ main{ grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  .card h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px 14px; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+  input, select { font:inherit; color:var(--ink); padding:7px 9px; border:1px solid var(--line); border-radius:7px; background:#fff; }
+  .flags { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:8px; }
+  .flags label { flex-direction:row; align-items:center; gap:8px; color:var(--ink); font-size:13px; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  button { font:inherit; padding:8px 14px; border-radius:7px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); font-weight:600; }
+  aside { position:sticky; top:16px; align-self:start; }
+  .score { font-size:52px; font-weight:700; line-height:1; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-weight:700; font-size:12px; color:#fff; }
+  .WHITE{ background:var(--white);} .GREY{ background:var(--grey);} .RED{ background:var(--red);}
+  .decision { font-size:18px; font-weight:600; margin:8px 0 4px; }
+  ul { padding-left:18px; margin:6px 0; }
+  pre { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; font-size:12px; overflow:auto; max-height:260px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  td, th { text-align:left; padding:5px 4px; border-bottom:1px solid var(--line); }
+  .muted { color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Alternative Credit Scoring for Under-banked Individuals</h1>
+  <p>Gig workers, students and people with no credit history. Enter any applicant, or load an example, then press <b>Score</b>.</p>
+</header>
+<main>
+  <section>
+    <div class="bar">
+      <button data-ex="good">Example: good payer</button>
+      <button data-ex="grey">Example: borderline (grey)</button>
+      <button data-ex="risky">Example: risky</button>
+      <button data-ex="red">Example: fraud device (red)</button>
+      <button class="primary" id="scoreBtn">Score applicant</button>
+    </div>
+    <form id="form"></form>
+  </section>
+  <aside>
+    <div class="card" id="result"><h2>Result</h2><p class="muted">No score yet.</p></div>
+    <div class="card"><h2>Your tries</h2>
+      <table><thead><tr><th>#</th><th>Score</th><th>Category</th><th>Decision</th></tr></thead><tbody id="history"></tbody></table>
+    </div>
+    <div class="card"><h2>Model</h2><div id="metrics" class="muted">Loading…</div></div>
+  </aside>
+</main>
+<script>
+const GROUPS = [
+  ["Profile", [
+    ["segment","Segment","select",["gig_worker","student","thin_file","informal_salaried"]],
+    ["age","Age","int"], ["city_tier","City tier","select",[1,2,3]],
+    ["monthly_income","Monthly income (₹)","num"], ["income_variability","Income variability (0–1)","ratio"],
+    ["employment_months","Months of work history","num"], ["dependents","Dependents","int"]]],
+  ["Telecom", [
+    ["recharge_on_time_ratio","Recharges on time (0–1)","ratio"], ["phone_bill_on_time_ratio","Phone bill on time (0–1)","ratio"],
+    ["recharge_gaps_6m","Recharge gaps (6 months)","int"], ["avg_recharge_amount","Avg recharge (₹)","num"],
+    ["sim_age_months","SIM age (months)","num"], ["sim_changes_12m","SIM changes (12 months)","int"]]],
+  ["Bills", [
+    ["utility_bill_on_time_ratio","Utility bills on time (0–1)","ratio"], ["rent_on_time_ratio","Rent on time (0–1)","ratio"]]],
+  ["UPI behaviour", [
+    ["upi_monthly_inflow","UPI inflow / month (₹)","num"], ["upi_monthly_spend","UPI spend / month (₹)","num"],
+    ["upi_txn_count_month","UPI transactions / month","int"], ["pct_spend_essentials","Share on essentials (0–1)","ratio"],
+    ["pct_spend_entertainment","Share on entertainment (0–1)","ratio"], ["pct_spend_gambling","Share on gambling (0–1)","ratio"],
+    ["p2p_txn_ratio","Person-to-person share (0–1)","ratio"], ["failed_txn_ratio","Failed transactions (0–1)","ratio"],
+    ["late_night_txn_ratio","Late-night transactions (0–1)","ratio"], ["avg_balance","Average balance (₹)","num"],
+    ["low_balance_days_month","Low-balance days / month","int"]]],
+  ["Installed apps", [
+    ["num_gambling_apps","Gambling apps","int"], ["num_loan_apps","Loan apps","int"],
+    ["num_finance_apps","Finance apps","int"], ["num_apps_total","Total apps","int"]]],
+  ["Device", [
+    ["device_type","Device type","select",["phone","tablet","tv"]],
+    ["os_version_age_months","OS version age (months)","num"],
+    ["location_consistency_score","Location consistency (0–1)","ratio"]]],
+];
+const RED = [["device_rooted","Device rooted"],["vpn_active","VPN active"],["emulator_detected","Emulator detected"],
+  ["vm_detected","Virtual machine detected"],["frida_detected","Frida / hooking tool"],
+  ["timezone_mismatch","Timezone mismatch (device / SIM / network)"],["device_id_mismatch","Device ID (MAC / IMEI) mismatch"]];
+
+const form = document.getElementById("form");
+for (const [title, fields] of GROUPS) {
+  const card = document.createElement("div"); card.className = "card";
+  card.innerHTML = `<h2>${title}</h2><div class="grid"></div>`;
+  for (const [name, label, type, opts] of fields) {
+    const l = document.createElement("label"); l.textContent = label;
+    let el;
+    if (type === "select") { el = document.createElement("select"); for (const o of opts) el.add(new Option(o, o)); }
+    else { el = document.createElement("input"); el.type = "number"; el.step = type === "ratio" ? "0.01" : "1";
+           el.min = 0; if (type === "ratio") el.max = 1; }
+    el.name = name; el.dataset.type = type; l.appendChild(el); card.querySelector(".grid").appendChild(l);
+  }
+  form.appendChild(card);
+}
+const redCard = document.createElement("div"); redCard.className = "card";
+redCard.innerHTML = `<h2>Red flags (any one = rejected)</h2><div class="flags"></div>`;
+for (const [name, label] of RED) {
+  redCard.querySelector(".flags").insertAdjacentHTML("beforeend", `<label><input type="checkbox" name="${name}"> ${label}</label>`);
+}
+form.appendChild(redCard);
+
+let examples = {};
+function fill(data) {
+  for (const el of form.elements) {
+    if (!(el.name in data)) continue;
+    if (el.type === "checkbox") el.checked = Number(data[el.name]) === 1; else el.value = data[el.name];
+  }
+}
+function read() {
+  const out = {};
+  for (const el of form.elements) {
+    if (!el.name) continue;
+    if (el.type === "checkbox") out[el.name] = el.checked ? 1 : 0;
+    else if (el.name === "city_tier") out[el.name] = Number(el.value);
+    else if (el.tagName === "SELECT") out[el.name] = el.value;
+    else out[el.name] = Number(el.value);
+  }
+  return out;
+}
+let tries = 0;
+async function score() {
+  const res = await fetch("/api/score", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(read())});
+  const box = document.getElementById("result");
+  if (!res.ok) { box.innerHTML = `<h2>Result</h2><p>Input error:</p><pre>${JSON.stringify(await res.json(), null, 2)}</pre>`; return; }
+  const r = await res.json();
+  const reasons = r.reasons.length ? `<ul>${r.reasons.map(x => `<li>${x}</li>`).join("")}</ul>` : `<p class="muted">No risk reasons found.</p>`;
+  const model = r.model ? `<p class="muted">Model base score ${r.model.base_score} − grey penalty ${r.model.grey_penalty} · P(default) ${(r.model.default_probability*100).toFixed(1)}%</p>` : "";
+  box.innerHTML = `<h2>Result</h2>
+    <div class="score">${r.score}</div>
+    <span class="badge ${r.category}">${r.category}</span>
+    <div class="decision">${r.decision}${r.rejection_confidence ? " (" + r.rejection_confidence + ")" : ""}</div>
+    ${model}<b>Reasons</b>${reasons}
+    <details><summary class="muted">JSON response</summary><pre>${JSON.stringify(r, null, 2)}</pre></details>`;
+  tries += 1;
+  document.getElementById("history").insertAdjacentHTML("afterbegin",
+    `<tr><td>${tries}</td><td>${r.score}</td><td><span class="badge ${r.category}">${r.category}</span></td><td>${r.decision}</td></tr>`);
+}
+document.getElementById("scoreBtn").onclick = score;
+document.querySelectorAll("[data-ex]").forEach(b => b.onclick = () => { fill(examples[b.dataset.ex]); score(); });
+
+(async () => {
+  examples = await (await fetch("/api/examples")).json();
+  fill(examples.good);
+  const m = await (await fetch("/api/metrics")).json();
+  const bands = Object.entries(m.default_rate_by_score_band)
+    .map(([b, v]) => `<tr><td>${b}</td><td>${v.applicants}</td><td>${(v.actual_default_rate*100).toFixed(1)}%</td></tr>`).join("");
+  document.getElementById("metrics").innerHTML =
+    `Random Forest, ${m.n_features} engineered features, trained on ${m.n_train_rows.toLocaleString()} synthetic applicants.<br>
+     5-fold CV: accuracy <b>${(m.accuracy*100).toFixed(1)}%</b> (baseline ${(m.baseline_accuracy_always_repay*100).toFixed(1)}%),
+     ROC-AUC <b>${m.roc_auc.toFixed(3)}</b>.
+     <table style="margin-top:8px"><thead><tr><th>Score band</th><th>People</th><th>Actually defaulted</th></tr></thead><tbody>${bands}</tbody></table>`;
+})();
+</script>
+</body>
+</html>
